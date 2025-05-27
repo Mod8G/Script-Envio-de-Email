@@ -1,0 +1,623 @@
+function enviarEmailsN() {
+var ui = SpreadsheetApp.getUi();
+var response = ui.alert('Confirmação', 'Tem certeza que deseja enviar os e-mails?', ui.ButtonSet.YES_NO);
+
+// Se o usuário clicar em 'YES', continua com o envio
+if (response == ui.Button.YES) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetCobrança = ss.getSheetByName("Cobrança DS Normal");
+  var sheetBase = ss.getSheetByName("Base Fornecedor");
+
+  // Obter cabeçalho da planilha "Cobrança DS Normal"
+  var headerRange = sheetCobrança.getRange(4, 4, 1, 3);
+  var header = headerRange.getValues()[0];
+  var headerBackgrounds = headerRange.getBackgrounds();
+
+  // Obter o filtro da planilha "Cobrança DS Normal"
+  var filter = sheetCobrança.getFilter();
+  var filteredRows = [];
+  if (filter) {
+    // Obter todas as linhas e verificar quais estão visíveis
+    var lastRow = sheetCobrança.getLastRow();
+    var rows = sheetCobrança.getRange(5, 4, lastRow - 4, 3).getValues();
+    var rowBackgrounds = sheetCobrança.getRange(5, 4, lastRow - 4, 3).getBackgrounds();
+    var brands = sheetCobrança.getRange(5, 6, lastRow - 4, 1).getValues();
+    
+    for (var i = 0; i < rows.length; i++) {
+      if (sheetCobrança.isRowHiddenByFilter(i + 5)) {
+        continue; // Ignorar linhas ocultas pelo filtro
+      }
+      filteredRows.push({
+        data: rows[i],
+        background: rowBackgrounds[i],
+        brand: brands[i][0]
+      });
+    }
+  }
+
+  // Obter dados da planilha "Base Fornecedor"
+  var dataBase = sheetBase.getRange(2, 3, sheetBase.getLastRow() - 1, 14).getValues();
+
+  // Definir o prefixo e sufixo do título do e-mail
+  var titlePrefix = "Andamento de Pedidos";
+
+  // Calcular o sufixo do título do e-mail baseado na semana e no mês/ano atual
+  var today = new Date();
+  var week = Math.ceil(today.getDate() / 7); // Semana do mês
+
+  // Mapeamento de meses em inglês para português
+  var monthNames = {
+    "Jan": "Jan",
+    "Feb": "Fev",
+    "Mar": "Mar",
+    "Apr": "Abr",
+    "May": "Mai",
+    "Jun": "Jun",
+    "Jul": "Jul",
+    "Aug": "Ago",
+    "Sep": "Set",
+    "Oct": "Out",
+    "Nov": "Nov",
+    "Dec": "Dez"
+  };
+
+  // Obter o mês em inglês e mapear para português
+  var month = Utilities.formatDate(today, Session.getScriptTimeZone(), "MMM");
+  var monthInPortuguese = monthNames[month] || month;
+
+  var year = Utilities.formatDate(today, Session.getScriptTimeZone(), "yy"); // Ano abreviado
+  var titleSuffix = `${week}ª Semana - ${monthInPortuguese}/${year}`;
+
+  // Converter a data na coluna 4 para um formato simplificado a partir da linha 5
+  var formattedData = filteredRows.map(function(row) {
+    if (row.data[0]) { // Verifica se há um valor na coluna 4
+      var date = new Date(row.data[0]);
+      if (!isNaN(date.getTime())) { // Verifica se é uma data válida
+        row.data[0] = Utilities.formatDate(date, Session.getScriptTimeZone(), "dd/MM/yyyy");
+      }
+    }
+    return row;
+  });
+
+  // Mapear Brands para e-mails
+  var emailMap = {};
+  dataBase.forEach(function(row) {
+    var brand = row[0];
+    var email = row[13];
+    if (brand && email) {
+      if (!emailMap[brand]) {
+        emailMap[brand] = [];
+      }
+      emailMap[brand].push(email);
+    }
+  });
+
+  // Definir saudação com base no horário atual
+  var currentHour = today.getHours();
+  var greeting = currentHour < 12 ? "bom dia" : "boa tarde";
+
+  // Enviar e-mails
+  var brandsProcessed = {};
+  filteredRows.forEach(function(row) {
+    var brand = row.brand;
+    if (brand && emailMap[brand] && !brandsProcessed[brand]) {
+      var emails = emailMap[brand].join(',');
+
+      // Construir a tabela HTML para o corpo do e-mail
+      var tableHtml = '<table border="1" style="border-collapse: collapse; width: auto; text-align: center;"><tr>';
+      header.forEach(function(cell, i) {
+        if (i !== 2) { // Ignorar a terceira coluna (índice 2)
+          tableHtml += '<th style="background-color: ' + headerBackgrounds[0][i] + '; text-align: center; padding: 2px; white-space: nowrap;">' + cell + '</th>';
+        }
+      });
+      tableHtml += '</tr>';
+
+      filteredRows.forEach(function(cobRow) {
+        if (cobRow.brand === brand) {
+          tableHtml += '<tr>';
+          cobRow.data.forEach(function(cell, colIndex) {
+            if (colIndex !== 2) { // Ignorar a terceira coluna (índice 2)
+              var bgColor = cobRow.background ? cobRow.background[colIndex] : '#FFFFFF';
+              tableHtml += '<td style="background-color: ' + bgColor + '; text-align: center; padding: 2px; white-space: nowrap;">' + cell + '</td>';
+            }
+          });
+          tableHtml += '</tr>';
+        }
+      });
+      tableHtml += '</table>';
+
+      var title = `${titlePrefix} (${brand}) (Westwing) - ${titleSuffix}`;
+      var body = `Prezados, ${greeting}!<br>
+      <br>
+      Identifiquei em meu sistema que temos pedidos em atraso e/ou a vencer, conforme abaixo.<br>
+      <br>
+      Poderiam informar qual a previsão de expedição dos mesmos?<br>
+      <br>
+      ${tableHtml}<br>
+      <br>
+      Caso já tenha feito o envio por gentileza atualizar no portal, os pedidos com status <b>"Empacotado"</b> devem migrar automaticamente para o status <b>"Expedido"</b>, caso isso não ocorra por favor nos sinalize.<br>
+      <br>
+      Se algum pedido estiver ou for sofrer atraso favor nos informar motivo e nova data de expedição<br>
+      <br>
+      Att;<br>`;
+
+      MailApp.sendEmail({
+        to: emails + ",dropshipping@westwing.com.br",
+        subject: title,
+        htmlBody: body
+      });
+
+      brandsProcessed[brand] = true; // Marca a Brand como processada
+    }
+  });
+} else {
+    ui.alert('Envio de e-mails cancelado.');
+  }
+}
+
+function enviarEmailsH() {
+var ui = SpreadsheetApp.getUi();
+var response = ui.alert('Confirmação', 'Tem certeza que deseja enviar os e-mails?', ui.ButtonSet.YES_NO);
+
+// Se o usuário clicar em 'YES', continua com o envio
+if (response == ui.Button.YES) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetCobrança = ss.getSheetByName("Cobrança DS Hibrído");
+  var sheetBase = ss.getSheetByName("Base Fornecedor");
+
+  // Obter cabeçalho da planilha "Cobrança DS Hibrído"
+  var headerRange = sheetCobrança.getRange(4, 4, 1, 3);
+  var header = headerRange.getValues()[0];
+  var headerBackgrounds = headerRange.getBackgrounds();
+
+  // Obter o filtro da planilha "Cobrança DS Hibrído"
+  var filter = sheetCobrança.getFilter();
+  var filteredRows = [];
+  if (filter) {
+    // Obter todas as linhas e verificar quais estão visíveis
+    var lastRow = sheetCobrança.getLastRow();
+    var rows = sheetCobrança.getRange(5, 4, lastRow - 4, 3).getValues();
+    var rowBackgrounds = sheetCobrança.getRange(5, 4, lastRow - 4, 3).getBackgrounds();
+    var brands = sheetCobrança.getRange(5, 6, lastRow - 4, 1).getValues();
+    
+    for (var i = 0; i < rows.length; i++) {
+      if (sheetCobrança.isRowHiddenByFilter(i + 5)) {
+        continue; // Ignorar linhas ocultas pelo filtro
+      }
+      filteredRows.push({
+        data: rows[i],
+        background: rowBackgrounds[i],
+        brand: brands[i][0]
+      });
+    }
+  }
+
+  // Obter dados da planilha "Base Fornecedor"
+  var dataBase = sheetBase.getRange(2, 3, sheetBase.getLastRow() - 1, 14).getValues();
+
+  // Definir o prefixo e sufixo do título do e-mail
+  var titlePrefix = "Andamento de Pedidos";
+
+  // Calcular o sufixo do título do e-mail baseado na semana e no mês/ano atual
+  var today = new Date();
+  var week = Math.ceil(today.getDate() / 7); // Semana do mês
+
+  // Mapeamento de meses em inglês para português
+  var monthNames = {
+    "Jan": "Jan",
+    "Feb": "Fev",
+    "Mar": "Mar",
+    "Apr": "Abr",
+    "May": "Mai",
+    "Jun": "Jun",
+    "Jul": "Jul",
+    "Aug": "Ago",
+    "Sep": "Set",
+    "Oct": "Out",
+    "Nov": "Nov",
+    "Dec": "Dez"
+  };
+
+  // Obter o mês em inglês e mapear para português
+  var month = Utilities.formatDate(today, Session.getScriptTimeZone(), "MMM");
+  var monthInPortuguese = monthNames[month] || month;
+
+  var year = Utilities.formatDate(today, Session.getScriptTimeZone(), "yy"); // Ano abreviado
+  var titleSuffix = `${week}ª Semana - ${monthInPortuguese}/${year}`;
+
+  // Converter a data na coluna 4 para um formato simplificado a partir da linha 5
+  var formattedData = filteredRows.map(function(row) {
+    if (row.data[0]) { // Verifica se há um valor na coluna 4
+      var date = new Date(row.data[0]);
+      if (!isNaN(date.getTime())) { // Verifica se é uma data válida
+        row.data[0] = Utilities.formatDate(date, Session.getScriptTimeZone(), "dd/MM/yyyy");
+      }
+    }
+    return row;
+  });
+
+  // Mapear Brands para e-mails
+  var emailMap = {};
+  dataBase.forEach(function(row) {
+    var brand = row[0];
+    var email = row[13];
+    if (brand && email) {
+      if (!emailMap[brand]) {
+        emailMap[brand] = [];
+      }
+      emailMap[brand].push(email);
+    }
+  });
+
+  // Definir saudação com base no horário atual
+  var currentHour = today.getHours();
+  var greeting = currentHour < 12 ? "bom dia" : "boa tarde";
+
+  // Enviar e-mails
+  var brandsProcessed = {};
+  filteredRows.forEach(function(row) {
+    var brand = row.brand;
+    if (brand && emailMap[brand] && !brandsProcessed[brand]) {
+      var emails = emailMap[brand].join(',');
+
+      // Construir a tabela HTML para o corpo do e-mail
+      var tableHtml = '<table border="1" style="border-collapse: collapse; width: auto; text-align: center;"><tr>';
+      header.forEach(function(cell, i) {
+        if (i !== 2) { // Ignorar a terceira coluna (índice 2)
+          tableHtml += '<th style="background-color: ' + headerBackgrounds[0][i] + '; text-align: center; padding: 2px; white-space: nowrap;">' + cell + '</th>';
+        }
+      });
+      tableHtml += '</tr>';
+
+      filteredRows.forEach(function(cobRow) {
+        if (cobRow.brand === brand) {
+          tableHtml += '<tr>';
+          cobRow.data.forEach(function(cell, colIndex) {
+            if (colIndex !== 2) { // Ignorar a terceira coluna (índice 2)
+              var bgColor = cobRow.background ? cobRow.background[colIndex] : '#FFFFFF';
+              tableHtml += '<td style="background-color: ' + bgColor + '; text-align: center; padding: 2px; white-space: nowrap;">' + cell + '</td>';
+            }
+          });
+          tableHtml += '</tr>';
+        }
+      });
+      tableHtml += '</table>';
+
+      var title = `${titlePrefix} (${brand}) (Westwing Now) - ${titleSuffix}`;
+      var body = `Prezados, ${greeting}!<br>
+      <br>
+      Identifiquei em meu sistema que temos pedidos em atraso e/ou a vencer, conforme abaixo.<br>
+      <br>
+      Poderiam informar qual a previsão de expedição dos mesmos? Precisamos receber a documentação <b><span style="background-color:#FFFF00">(romaneio preenchido + PDFs e XMLs)</span></b> com dois dias úteis de antecedência!<br>
+      <br>
+      ${tableHtml}<br>
+      <br>
+      Caso já tenha feito o envio por gentileza atualizar no portal, os pedidos com status <b>"Empacotado"</b> devem migrar automaticamente para o status <b>"Expedido"</b>, caso isso não ocorra por favor nos sinalize.<br>
+      <br>
+      Se algum pedido estiver ou for sofrer atraso favor nos informar motivo e nova data de expedição<br>
+      <br>
+      Att;<br>`;
+
+      MailApp.sendEmail({
+        to: emails + ",dropshipping@westwing.com.br",
+        subject: title,
+        htmlBody: body
+      });
+
+      brandsProcessed[brand] = true; // Marca a Brand como processada
+    }
+  });
+} else {
+    ui.alert('Envio de e-mails cancelado.');
+  }
+}
+
+function enviarEmailsP() {
+var ui = SpreadsheetApp.getUi();
+var response = ui.alert('Confirmação', 'Tem certeza que deseja enviar os e-mails?', ui.ButtonSet.YES_NO);
+
+// Se o usuário clicar em 'YES', continua com o envio
+if (response == ui.Button.YES) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetCobrança = ss.getSheetByName("Cobrança DS Pitágoras");
+  var sheetBase = ss.getSheetByName("Base Fornecedor");
+
+  // Obter cabeçalho da planilha "Cobrança DS Pitágoras"
+  var headerRange = sheetCobrança.getRange(4, 4, 1, 3); // Colunas 4, 5 e 6
+  var header = headerRange.getValues()[0];
+  var headerBackgrounds = headerRange.getBackgrounds();
+
+  // Obter o filtro da planilha "Cobrança DS Pitágoras"
+  var filter = sheetCobrança.getFilter();
+  var filteredRows = [];
+  if (filter) {
+    // Obter todas as linhas e verificar quais estão visíveis
+    var lastRow = sheetCobrança.getLastRow();
+    var rows = sheetCobrança.getRange(5, 4, lastRow - 4, 3).getValues(); // Colunas 4, 5 e 6
+    var rowBackgrounds = sheetCobrança.getRange(5, 4, lastRow - 4, 3).getBackgrounds();
+    var brands = sheetCobrança.getRange(5, 7, lastRow - 4, 1).getValues(); // Coluna 7
+    
+    for (var i = 0; i < rows.length; i++) {
+      if (sheetCobrança.isRowHiddenByFilter(i + 5)) {
+        continue; // Ignorar linhas ocultas pelo filtro
+      }
+      filteredRows.push({
+        data: rows[i],
+        background: rowBackgrounds[i],
+        brand: brands[i][0]
+      });
+    }
+  }
+
+  // Obter dados da planilha "Base Fornecedor"
+  var dataBase = sheetBase.getRange(2, 3, sheetBase.getLastRow() - 1, 14).getValues();
+
+  // Definir o prefixo e sufixo do título do e-mail
+  var titlePrefix = "Andamento de Pedidos";
+
+  // Calcular o sufixo do título do e-mail baseado na semana e no mês/ano atual
+  var today = new Date();
+  var week = Math.ceil(today.getDate() / 7); // Semana do mês
+
+  // Mapeamento de meses em inglês para português
+  var monthNames = {
+    "Jan": "Jan",
+    "Feb": "Fev",
+    "Mar": "Mar",
+    "Apr": "Abr",
+    "May": "Mai",
+    "Jun": "Jun",
+    "Jul": "Jul",
+    "Aug": "Ago",
+    "Sep": "Set",
+    "Oct": "Out",
+    "Nov": "Nov",
+    "Dec": "Dez"
+  };
+
+  // Obter o mês em inglês e mapear para português
+  var month = Utilities.formatDate(today, Session.getScriptTimeZone(), "MMM");
+  var monthInPortuguese = monthNames[month] || month;
+
+  var year = Utilities.formatDate(today, Session.getScriptTimeZone(), "yy"); // Ano abreviado
+  var titleSuffix = `${week}ª Semana - ${monthInPortuguese}/${year}`;
+
+  // Converter a data na coluna 3 para um formato simplificado a partir da linha 5
+  var formattedData = filteredRows.map(function(row) {
+    if (row.data[0]) { // Verifica se há um valor na coluna 3
+      var date = new Date(row.data[0]);
+      if (!isNaN(date.getTime())) { // Verifica se é uma data válida
+        row.data[0] = Utilities.formatDate(date, Session.getScriptTimeZone(), "dd/MM/yyyy");
+      }
+    }
+    return row;
+  });
+
+  // Mapear Brands para e-mails
+  var emailMap = {};
+  dataBase.forEach(function(row) {
+    var brand = row[0];
+    var email = row[13];
+    if (brand && email) {
+      if (!emailMap[brand]) {
+        emailMap[brand] = [];
+      }
+      emailMap[brand].push(email);
+    }
+  });
+
+  // Definir saudação com base no horário atual
+  var currentHour = today.getHours();
+  var greeting = currentHour < 12 ? "bom dia" : "boa tarde";
+
+  // Enviar e-mails
+  var brandsProcessed = {};
+  filteredRows.forEach(function(row) {
+    var brand = row.brand;
+    if (brand && emailMap[brand] && !brandsProcessed[brand]) {
+      var emails = emailMap[brand].join(',');
+
+      // Construir a tabela HTML para o corpo do e-mail
+      var tableHtml = '<table border="1" style="border-collapse: collapse; width: auto; text-align: center;"><tr>';
+      header.forEach(function(cell, i) {
+        tableHtml += '<th style="background-color: ' + headerBackgrounds[0][i] + '; text-align: center; padding: 2px; white-space: nowrap;">' + cell + '</th>';
+      });
+      tableHtml += '</tr>';
+
+      filteredRows.forEach(function(cobRow) {
+        if (cobRow.brand === brand) {
+          tableHtml += '<tr>';
+          for (var j = 0; j < 3; j++) { // Colunas 3, 4 e 5 (C, D, E)
+            var bgColor = cobRow.background ? cobRow.background[j] : '#FFFFFF';
+            tableHtml += '<td style="background-color: ' + bgColor + '; text-align: center; padding: 2px; white-space: nowrap;">' + cobRow.data[j] + '</td>';
+          }
+          tableHtml += '</tr>';
+        }
+      });
+      tableHtml += '</table>';
+
+      var title = `${titlePrefix} (${brand}) (Westwing) - ${titleSuffix}`;
+      var body = `Prezados, ${greeting}!<br>
+      <br>
+      Identifiquei em meu sistema que temos pedidos em atraso e/ou a vencer, conforme abaixo.<br>
+      <br>
+      Poderiam informar qual a previsão de expedição dos mesmos? Precisamos receber a documentação <b><span style="background-color:#FFFF00">(romaneio preenchido + PDFs e XMLs)</span></b> com dois dias úteis de antecedência!<br>
+      <br>
+      ${tableHtml}<br>
+      <span style="color: #666666; font-size: 10px;">*Aguardando estoque - Pedido com status de pendente no portal (falta gerar etiqueta de transporte)<br>
+      *Faturado - Pedido já vinculado a um embarque (etiqueta de transporte já gerada)</span><br>
+      <br>
+      Caso a transportadora já tenha realizado a coleta por gentileza enviar o romaneio devidamente preenchido e assinado e expedir o embarque no portal.<br>
+      <br>
+      Se algum pedido estiver ou for sofrer atraso favor nos informar motivo e nova data de expedição.<br>
+      <br>
+      Att;<br>`;
+
+      MailApp.sendEmail({
+        to: emails + ",dropshipping@westwing.com.br",
+        subject: title,
+        htmlBody: body
+      });
+
+      brandsProcessed[brand] = true; // Marca a Brand como processada
+    }
+  });
+} else {
+    ui.alert('Envio de e-mails cancelado.');
+  }
+}
+
+function enviarEmailsM() {
+var ui = SpreadsheetApp.getUi();
+var response = ui.alert('Confirmação', 'Tem certeza que deseja enviar os e-mails?', ui.ButtonSet.YES_NO);
+
+// Se o usuário clicar em 'YES', continua com o envio
+if (response == ui.Button.YES) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetCobrança = ss.getSheetByName("Cobrança DS Milk Run");
+  var sheetBase = ss.getSheetByName("Base Fornecedor");
+
+  // Obter cabeçalho da planilha "Cobrança DS Milk Run"
+  var headerRange = sheetCobrança.getRange(4, 4, 1, 3); // Colunas 4, 5 e 6
+  var header = headerRange.getValues()[0];
+  var headerBackgrounds = headerRange.getBackgrounds();
+
+  // Obter o filtro da planilha "Cobrança DS Milk Run"
+  var filter = sheetCobrança.getFilter();
+  var filteredRows = [];
+  if (filter) {
+    // Obter todas as linhas e verificar quais estão visíveis
+    var lastRow = sheetCobrança.getLastRow();
+    var rows = sheetCobrança.getRange(5, 4, lastRow - 4, 3).getValues(); // Colunas 4, 5 e 6
+    var rowBackgrounds = sheetCobrança.getRange(5, 4, lastRow - 4, 3).getBackgrounds();
+    var brands = sheetCobrança.getRange(5, 7, lastRow - 4, 1).getValues(); // Coluna 7
+    
+    for (var i = 0; i < rows.length; i++) {
+      if (sheetCobrança.isRowHiddenByFilter(i + 5)) {
+        continue; // Ignorar linhas ocultas pelo filtro
+      }
+      filteredRows.push({
+        data: rows[i],
+        background: rowBackgrounds[i],
+        brand: brands[i][0]
+      });
+    }
+  }
+
+  // Obter dados da planilha "Base Fornecedor"
+  var dataBase = sheetBase.getRange(2, 3, sheetBase.getLastRow() - 1, 14).getValues();
+
+  // Definir o prefixo e sufixo do título do e-mail
+  var titlePrefix = "Andamento de Pedidos";
+
+  // Calcular o sufixo do título do e-mail baseado na semana e no mês/ano atual
+  var today = new Date();
+  var week = Math.ceil(today.getDate() / 7); // Semana do mês
+
+  // Mapeamento de meses em inglês para português
+  var monthNames = {
+    "Jan": "Jan",
+    "Feb": "Fev",
+    "Mar": "Mar",
+    "Apr": "Abr",
+    "May": "Mai",
+    "Jun": "Jun",
+    "Jul": "Jul",
+    "Aug": "Ago",
+    "Sep": "Set",
+    "Oct": "Out",
+    "Nov": "Nov",
+    "Dec": "Dez"
+  };
+
+  // Obter o mês em inglês e mapear para português
+  var month = Utilities.formatDate(today, Session.getScriptTimeZone(), "MMM");
+  var monthInPortuguese = monthNames[month] || month;
+
+  var year = Utilities.formatDate(today, Session.getScriptTimeZone(), "yy"); // Ano abreviado
+  var titleSuffix = `${week}ª Semana - ${monthInPortuguese}/${year}`;
+
+  // Converter a data na coluna 4 para um formato simplificado a partir da linha 5
+  var formattedData = filteredRows.map(function(row) {
+    if (row.data[0]) { // Verifica se há um valor na coluna 4
+      var date = new Date(row.data[0]);
+      if (!isNaN(date.getTime())) { // Verifica se é uma data válida
+        row.data[0] = Utilities.formatDate(date, Session.getScriptTimeZone(), "dd/MM/yyyy");
+      }
+    }
+    return row;
+  });
+
+  // Mapear Brands para e-mails
+  var emailMap = {};
+  dataBase.forEach(function(row) {
+    var brand = row[0];
+    var email = row[13];
+    if (brand && email) {
+      if (!emailMap[brand]) {
+        emailMap[brand] = [];
+      }
+      emailMap[brand].push(email);
+    }
+  });
+
+  // Definir saudação com base no horário atual
+  var currentHour = today.getHours();
+  var greeting = currentHour < 12 ? "bom dia" : "boa tarde";
+
+  // Enviar e-mails
+  var brandsProcessed = {};
+  filteredRows.forEach(function(row) {
+    var brand = row.brand;
+    if (brand && emailMap[brand] && !brandsProcessed[brand]) {
+      var emails = emailMap[brand].join(',');
+
+      // Construir a tabela HTML para o corpo do e-mail
+      var tableHtml = '<table border="1" style="border-collapse: collapse; width: auto; text-align: center;"><tr>';
+      header.forEach(function(cell, i) {
+        tableHtml += '<th style="background-color: ' + headerBackgrounds[0][i] + '; text-align: center; padding: 2px; white-space: nowrap;">' + cell + '</th>';
+      });
+      tableHtml += '</tr>';
+
+      filteredRows.forEach(function(cobRow) {
+        if (cobRow.brand === brand) {
+          tableHtml += '<tr>';
+          cobRow.data.forEach(function(cell, colIndex) {
+            var bgColor = cobRow.background ? cobRow.background[colIndex] : '#FFFFFF';
+            tableHtml += '<td style="background-color: ' + bgColor + '; text-align: center; padding: 2px; white-space: nowrap;">' + cell + '</td>';
+          });
+          tableHtml += '</tr>';
+        }
+      });
+      tableHtml += '</table>';
+
+      var title = `${titlePrefix} (${brand}) (Westwing) - ${titleSuffix}`;
+      var body = `Prezados, ${greeting}!<br>
+      <br>
+      Identifiquei em meu sistema que temos pedidos em atraso e/ou a vencer, conforme abaixo.<br>
+      <br>
+      Poderiam informar qual a previsão de expedição dos mesmos? Precisamos receber a documentação <b><span style="background-color:#FFFF00">(romaneio preenchido + PDFs e XMLs)</span></b> com um dia útil de antecedência!<br>
+      <br>
+      ${tableHtml}<br>
+      <span style="color: #666666; font-size: 10px;">*Aguardando estoque - Pedido com status de pendente no portal (falta gerar etiqueta de transporte)<br>
+      *Faturado - Pedido já vinculado a um embarque (etiqueta de transporte já gerada)</span><br>
+      <br>
+      Caso a transportadora já tenha realizado a coleta por gentileza enviar o romaneio devidamente preenchido e assinado e expedir o embarque no portal.<br>
+      <br>
+      Se algum pedido estiver ou for sofrer atraso favor nos informar motivo e nova data de expedição.<br>
+      <br>
+      Att;<br>`;
+
+      MailApp.sendEmail({
+        to: emails + ",dropshipping@westwing.com.br",
+        subject: title,
+        htmlBody: body
+      });
+
+      brandsProcessed[brand] = true; // Marca a Brand como processada
+    }
+  });
+} else {
+    ui.alert('Envio de e-mails cancelado.');
+  }
+}
